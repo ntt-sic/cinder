@@ -23,6 +23,7 @@ from cinder.api import common
 from cinder.api.openstack import wsgi
 from cinder.api import xmlutil
 from cinder import exception
+from cinder.openstack.common import idempotent
 from cinder.openstack.common import log as logging
 from cinder.openstack.common import uuidutils
 from cinder import utils
@@ -348,6 +349,8 @@ class VolumeController(wsgi.Controller):
 
         return image_uuid
 
+    @idempotent.idempotent
+    @idempotent.helper(substance="show", resolver="id")
     @wsgi.serializers(xml=VolumeTemplate)
     @wsgi.deserializers(xml=CreateDeserializer)
     def create(self, req, body):

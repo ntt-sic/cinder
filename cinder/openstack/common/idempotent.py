@@ -158,9 +158,9 @@ def idempotent(f):
                 if data[resource].has_key(ti):
                     identifier = ti
                     break
-                if not identifier:
-                    msg = "There is no identifier to satisfy the request."
-                    raise exception.InvalidClientToken(details=msg)
+            if not identifier:
+                msg = "There is no identifier to satisfy the request."
+                raise exception.InvalidClientToken(details=msg)
 
             ### make register data which is composed with
             if isinstance(api_result, dict):

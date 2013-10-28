@@ -148,12 +148,12 @@ def idempotent(f):
 
             ### get id from specified resolver, or detect id
             resource = data.keys()[0]
-            identifier = None
             if hasattr(f, 'resolver'):
                 target_identifier = (f.resolver,)
             else:
                 target_identifier = ('id', 'uuid', 'name')
 
+            identifier = None
             for ti in target_identifier:
                 if data[resource].has_key(ti):
                     identifier = ti

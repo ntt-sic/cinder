@@ -23,6 +23,7 @@ from cinder.api.openstack import wsgi
 from cinder.api.v1 import volumes
 from cinder.api import xmlutil
 from cinder import exception
+from cinder.openstack.common import idempotent
 from cinder.openstack.common import log as logging
 from cinder.openstack.common import strutils
 from cinder import utils
@@ -155,6 +156,7 @@ class SnapshotsController(wsgi.Controller):
         res = [entity_maker(context, snapshot) for snapshot in limited_list]
         return {'snapshots': res}
 
+    @idempotent.idempotent
     @wsgi.serializers(xml=SnapshotTemplate)
     def create(self, req, body):
         """Creates a new snapshot."""

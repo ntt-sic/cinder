@@ -56,6 +56,7 @@ from cinder.openstack.common import uuidutils
 from cinder import quota
 from cinder import utils
 from cinder.volume.configuration import Configuration
+from cinder.volume.flows import copy_volume_to_image
 from cinder.volume.flows import create_volume
 from cinder.volume import rpcapi as volume_rpcapi
 from cinder.volume import utils as volume_utils
@@ -559,28 +560,18 @@ class VolumeManager(manager.SchedulerDependentManager):
         'id', 'container_format', 'disk_format'
 
         """
-        payload = {'volume_id': volume_id, 'image_id': image_meta['id']}
-        try:
-            volume = self.db.volume_get(context, volume_id)
-            self.driver.ensure_export(context.elevated(), volume)
-            image_service, image_id = \
-                glance.get_remote_image_service(context, image_meta['id'])
-            self.driver.copy_volume_to_image(context, volume, image_service,
-                                             image_meta)
-            LOG.debug(_("Uploaded volume %(volume_id)s to "
-                        "image (%(image_id)s) successfully"),
-                      {'volume_id': volume_id, 'image_id': image_id})
-        except Exception as error:
-            with excutils.save_and_reraise_exception():
-                payload['message'] = unicode(error)
-        finally:
-            if (volume['instance_uuid'] is None and
-                    volume['attached_host'] is None):
-                self.db.volume_update(context, volume_id,
-                                      {'status': 'available'})
-            else:
-                self.db.volume_update(context, volume_id,
-                                      {'status': 'in-use'})
+        create_what = {'volume_id': volume_id, 'image_metadata': image_meta,
+                       'context': context}
+
+        engine = copy_volume_to_image.get_manager_flow(self.driver,
+                                                       self.db,
+                                                       create_what)
+        assert engine, _('Copy volume to image flow not retrieved')
+        engine.run()
+        if engine.storage.get_flow_state() != states.SUCCESS:
+            raise exception.CinderException(_("Failed to successfully complete"
+                                              "copy volume to image manager"
+                                              "flow"))
 
     @utils.require_driver_initialized
     def initialize_connection(self, context, volume_id, connector):

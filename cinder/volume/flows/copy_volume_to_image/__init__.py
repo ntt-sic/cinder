@@ -121,6 +121,98 @@ class CopyVolumeToImageCastTask(base.CinderTask):
                                                 image_metadata)
 
 
+class OnFailureChangeStatusTask(base.CinderTask):
+    """
+    Helper task that sets a volume status to "available" or "in-use" depending
+    on whether the volume is attached to the instance or not.
+    """
+
+    def __init__(self, db, **kwargs):
+        self.db = db
+        requires = ('context', 'volume_id')
+        super(OnFailureChangeStatusTask, self). \
+            __init__(addons=[ACTION], requires=requires, **kwargs)
+
+    def execute(self, context, volume_id):
+        return {'volume_id': volume_id, 'context': context}
+
+    def revert(self, context, volume_id, *args, **kwargs):
+        #Change volume status
+        volume = self.db.volume_get(context, volume_id)
+        if (volume['instance_uuid'] is None and
+                volume['attached_host'] is None):
+            self.db.volume_update(context, volume_id,
+                                  {'status': 'available'})
+        else:
+            self.db.volume_update(context, volume_id,
+                                  {'status': 'in-use'})
+
+
+class ExtractVolumeSpecTask(base.CinderTask):
+    """
+    Extract volume specs from db.
+    """
+
+    def __init__(self, db, **kwargs):
+        self.db = db
+        requires = ('context', 'volume_id')
+        provides = 'volume'
+        super(ExtractVolumeSpecTask, self). \
+            __init__(addons=[ACTION], requires=requires,
+                     provides=provides, **kwargs)
+
+    def execute(self, context, volume_id):
+        volume = self.db.volume_get(context, volume_id)
+        return volume
+
+
+class CopyVolumeToImageTask(base.CinderTask):
+    """
+    Performs ensure export and copy volume to image call to driver.
+    """
+
+    def __init__(self, driver, **kwargs):
+        self.driver = driver
+        requires = ('context', 'volume', 'image_metadata')
+        super(CopyVolumeToImageTask, self). \
+            __init__(addons=[ACTION], requires=requires, **kwargs)
+
+    def execute(self, context, volume, image_metadata):
+        "Uploads the specified volume to Glance."
+        self.driver.ensure_export(context.elevated(), volume)
+        image_service, image_id = \
+            glance.get_remote_image_service(context, image_metadata['id'])
+        self.driver.copy_volume_to_image(context, volume,
+                                         image_service,
+                                         image_metadata)
+        LOG.debug(_("Uploaded volume %(volume_id)s to "
+                    "image (%(image_id)s) successfully"),
+                  {'volume_id': volume['id'],
+                   'image_id': image_metadata['id']})
+
+
+class CopyVolumeToImageOnFinishTask(base.CinderTask):
+    """
+    Update volume status after copying volume to image
+    """
+
+    def __init__(self, db, **kwargs):
+        self.db = db
+        requires = ('context', 'volume')
+        super(CopyVolumeToImageOnFinishTask, self). \
+            __init__(addons=[ACTION], requires=requires, **kwargs)
+
+    def execute(self, context, volume):
+        volume_id = volume['id']
+        if (volume['instance_uuid'] is None and
+                volume['attached_host'] is None):
+            self.db.volume_update(context, volume_id,
+                                  {'status': 'available'})
+        else:
+            self.db.volume_update(context, volume_id,
+                                  {'status': 'in-use'})
+
+
 def get_api_flow(volume_rpcapi, image_service, db, create_what):
     """Constructs and returns the api entrypoint flow.
 
@@ -141,6 +233,34 @@ def get_api_flow(volume_rpcapi, image_service, db, create_what):
     api_flow.add(CreateImageServiceTask(image_service))
     api_flow.add(UpdateVolumeStatusTask(db))
     api_flow.add(CopyVolumeToImageCastTask(volume_rpcapi))
+
+    engine = taskflow.engines.load(api_flow, store=create_what)
+
+    return engine
+
+
+def get_manager_flow(driver, db, create_what):
+    """Constructs and returns the manager entrypoint flow.
+
+    This flow will do the following:
+
+    1. Inject keys & values for dependent tasks.
+    2. On failure change volume status.
+    3. Get volume specs from db.
+    4. Get remote Image service from metadata.
+    5. Copy volume to image.
+    6. Update volume status depending on whether the volume
+       is attached to the instance or not.
+    """
+
+    flow_name = ACTION.replace(":", "_") + "_manager"
+    api_flow = linear_flow.Flow(flow_name)
+
+    api_flow.add(base.InjectTask(create_what, addons=[ACTION]))
+    api_flow.add(OnFailureChangeStatusTask(db))
+    api_flow.add(ExtractVolumeSpecTask(db))
+    api_flow.add(CopyVolumeToImageTask(driver))
+    api_flow.add(CopyVolumeToImageOnFinishTask(db))
 
     engine = taskflow.engines.load(api_flow, store=create_what)
 

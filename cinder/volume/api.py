@@ -38,6 +38,7 @@ from cinder import quota
 from cinder.scheduler import rpcapi as scheduler_rpcapi
 from cinder import units
 from cinder import utils
+from cinder.volume.flows import copy_volume_to_image
 from cinder.volume.flows import create_volume
 from cinder.volume import rpcapi as volume_rpcapi
 from cinder.volume import volume_types
@@ -719,17 +720,26 @@ class API(base.Base):
     @wrap_check_policy
     def copy_volume_to_image(self, context, volume, metadata, force):
         """Create a new image from the specified volume."""
-        self._check_volume_availability(context, volume, force)
+        create_what = {'volume': volume, 'volume_id': volume['id'],
+                       'metadata': metadata,
+                       'force': force, 'context': context}
+        engine = copy_volume_to_image.get_api_flow(self.volume_rpcapi,
+                                                   self.image_service,
+                                                   self.db,
+                                                   create_what)
+        assert engine, _('Copy volume to image flow not retrieved')
+        engine.run()
+        if engine.storage.get_flow_state() != states.SUCCESS:
+            raise exception.CinderException(_("Failed to successfully complete"
+                                              "copy volume to image api flow"))
 
-        recv_metadata = self.image_service.create(context, metadata)
-        self.update(context, volume, {'status': 'uploading'})
-        self.volume_rpcapi.copy_volume_to_image(context,
-                                                volume,
-                                                recv_metadata)
+        result = engine.storage.fetch_all()
+        volume = result.get('volume')
+        recv_metadata = result.get('image_metadata')
 
         response = {"id": volume['id'],
                     "updated_at": volume['updated_at'],
-                    "status": 'uploading',
+                    "status": volume['status'],
                     "display_description": volume['display_description'],
                     "size": volume['size'],
                     "volume_type": volume['volume_type'],
@@ -737,6 +747,7 @@ class API(base.Base):
                     "container_format": recv_metadata['container_format'],
                     "disk_format": recv_metadata['disk_format'],
                     "image_name": recv_metadata.get('name', None)}
+
         return response
 
     @wrap_check_policy

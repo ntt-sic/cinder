@@ -38,7 +38,9 @@ intact.
 """
 
 
+import sys
 import time
+import traceback
 
 from oslo.config import cfg
 
@@ -60,8 +62,6 @@ from cinder.volume.flows import create_volume
 from cinder.volume import rpcapi as volume_rpcapi
 from cinder.volume import utils as volume_utils
 from cinder.volume import volume_types
-
-from cinder.taskflow import states
 
 from eventlet.greenpool import GreenPool
 
@@ -237,31 +237,114 @@ class VolumeManager(manager.SchedulerDependentManager):
     def create_volume(self, context, volume_id, request_spec=None,
                       filter_properties=None, allow_reschedule=True,
                       snapshot_id=None, image_id=None, source_volid=None):
-        """Creates and exports the volume."""
 
-        flow = create_volume.get_manager_flow(
+        """Creates and exports the volume."""
+        context_saved = context.deepcopy()
+        context = context.elevated()
+        if filter_properties is None:
+            filter_properties = {}
+
+        flow_engine = create_volume.get_manager_flow(
+            context,
             self.db,
             self.driver,
-            self.scheduler_rpcapi,
             self.host,
             volume_id,
-            request_spec=request_spec,
-            filter_properties=filter_properties,
-            allow_reschedule=allow_reschedule,
             snapshot_id=snapshot_id,
             image_id=image_id,
-            source_volid=source_volid,
-            reschedule_context=context.deepcopy())
+            source_volid=source_volid)
 
-        assert flow, _('Manager volume flow not retrieved')
 
-        flow.run(context.elevated())
-        if flow.state != states.SUCCESS:
-            raise exception.CinderException(_("Failed to successfully complete"
-                                              " manager volume workflow"))
+        try:
+            flow_engine.run()
+            volume_ref = flow_engine.storage.fetch('volume')
+            return volume_ref['id']
 
-        self._reset_stats()
-        return volume_id
+        except exception.ImageCopyFailure:
+            return
+        except Exception:
+            exc_info = sys.exc_info()
+            rescheduled = False
+            # try to re-schedule volume:
+            if allow_reschedule:
+                rescheduled = self._reschedule_or_error(context_saved,
+                                                        volume_id,
+                                                        exc_info,
+                                                        snapshot_id,
+                                                        image_id,
+                                                        request_spec,
+                                                        filter_properties)
+
+            if rescheduled:
+                LOG.error(_('Unexpected Error: '), exc_info=exc_info)
+                msg = (_('Creating %(volume_id)s %(snapshot_id)s '
+                         '%(image_id)s was rescheduled due to '
+                         '%(reason)s')
+                       % {'volume_id': volume_id,
+                          'snapshot_id': snapshot_id,
+                          'image_id': image_id,
+                          'reason': unicode(exc_info[1])})
+                raise exception.CinderException(msg)
+            else:
+                # not re-scheduling
+                raise exc_info[0], exc_info[1], exc_info[2]
+
+    def _reschedule_or_error(self, context, volume_id, exc_info,
+                             snapshot_id, image_id, request_spec,
+                             filter_properties):
+        """Try to re-schedule the request."""
+        rescheduled = False
+        try:
+            method_args = (CONF.volume_topic, volume_id, snapshot_id,
+                           image_id, request_spec, filter_properties)
+
+            rescheduled = self._reschedule(context, request_spec,
+                                           filter_properties, volume_id,
+                                           self.scheduler_rpcapi.create_volume,
+                                           method_args,
+                                           exc_info)
+        except Exception:
+            rescheduled = False
+            LOG.exception(_("volume %s: Error trying to reschedule create"),
+                          volume_id)
+
+        return rescheduled
+
+    def _reschedule(self, context, request_spec, filter_properties,
+                    volume_id, scheduler_method, method_args,
+                    exc_info=None):
+        """Attempt to re-schedule a volume operation."""
+
+        retry = filter_properties.get('retry', None)
+        if not retry:
+            # no retry information, do not reschedule.
+            LOG.debug(_("Retry info not present, will not reschedule"))
+            return
+
+        if not request_spec:
+            LOG.debug(_("No request spec, will not reschedule"))
+            return
+
+        request_spec['volume_id'] = volume_id
+
+        LOG.debug(_("volume %(volume_id)s: re-scheduling %(method)s "
+                    "attempt %(num)d") %
+                  {'volume_id': volume_id,
+                   'method': scheduler_method.func_name,
+                   'num': retry['num_attempts']})
+
+        # reset the volume state:
+        now = timeutils.utcnow()
+        self.db.volume_update(context, volume_id,
+                              {'status': 'creating',
+                               'scheduled_at': now})
+
+        if exc_info:
+            # stringify to avoid circular ref problem in json serialization:
+            retry['exc'] = traceback.format_exception(*exc_info)
+
+        scheduler_method(context, *method_args)
+        return True
 
     @utils.require_driver_initialized
     def delete_volume(self, context, volume_id):

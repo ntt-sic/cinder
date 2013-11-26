@@ -57,7 +57,6 @@ import cinder.volume
 from cinder.volume import configuration as conf
 from cinder.volume import driver
 from cinder.volume.drivers import lvm
-from cinder.volume.flows import create_volume
 from cinder.volume import rpcapi as volume_rpcapi
 from cinder.volume import utils as volutils
 
@@ -1533,13 +1532,6 @@ class VolumeTestCase(BaseVolumeTestCase):
         def fake_create_volume(*args, **kwargs):
             raise exception.CinderException('fake exception')
 
-        def fake_reschedule_or_error(self, context, *args, **kwargs):
-            self.assertFalse(context.is_admin)
-            self.assertNotIn('admin', context.roles)
-            #compare context passed in with the context we saved
-            self.assertDictMatch(self.saved_ctxt.__dict__,
-                                 context.__dict__)
-
         #create context for testing
         ctxt = self.context.deepcopy()
         if 'admin' in ctxt.roles:
@@ -1548,8 +1540,6 @@ class VolumeTestCase(BaseVolumeTestCase):
         #create one copy of context for future comparison
         self.saved_ctxt = ctxt.deepcopy()
 
-        self.stubs.Set(create_volume.OnFailureRescheduleTask, '_reschedule',
-                       fake_reschedule_or_error)
         self.stubs.Set(self.volume.driver, 'create_volume', fake_create_volume)
 
         volume_src = tests_utils.create_volume(self.context,

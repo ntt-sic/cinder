@@ -20,6 +20,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import contextlib
+
 from oslo.config import cfg
 
 from cinder import exception
@@ -41,12 +43,21 @@ from cinder.volume import volume_types
 import taskflow.engines
 from taskflow import task
 from taskflow.patterns import linear_flow
+from taskflow.persistence import backends
+from taskflow.persistence import logbook
 from taskflow.utils import misc
 
 LOG = logging.getLogger(__name__)
 
-ACTION = 'volume:create'
+taskflow_opts = [
+    cfg.StrOpt('backend',
+               default='mysql://root:mysql@127.0.0.1/cinder?charset=utf8',
+               help=''),
+]
 CONF = cfg.CONF
+CONF.register_opts(taskflow_opts)
+
+ACTION = 'volume:create'
 GB = units.GiB
 QUOTAS = quota.QUOTAS
 
@@ -1389,6 +1400,23 @@ class CreateVolumeOnFinishTask(NotifyVolumeActionTask):
         })
 
 
+def get_engine_config():
+    backend_config = {
+        'connection': CONF.backend,
+    }
+    with contextlib.closing(backends.fetch(backend_config)) as be:
+        with contextlib.closing(be.get_connection()) as conn:
+            conn.upgrade()
+
+    engine_config = {
+        'backend': backend_config,
+        'engine_conf': 'serial',
+        'book': logbook.LogBook("create-volume"),
+    }
+
+    return engine_config
+
+
 def get_api_flow(scheduler_rpcapi, volume_rpcapi, db,
                  image_service,
                  az_check_functor,
@@ -1426,7 +1454,8 @@ def get_api_flow(scheduler_rpcapi, volume_rpcapi, db,
     api_flow.add(VolumeCastTask(scheduler_rpcapi, volume_rpcapi, db))
 
     # Now load (but do not run) the flow using the provided initial data.
-    return taskflow.engines.load(api_flow, store=create_what)
+    engine_config = get_engine_config()
+    return taskflow.engines.load(api_flow, store=create_what, **engine_config)
 
 
 def get_scheduler_flow(context, db, driver, request_spec=None, filter_properties=None,

@@ -351,7 +351,7 @@ class VolumeManager(manager.SchedulerDependentManager):
         return volume_ref['id']
 
     @locked_volume_operation
-    def delete_volume(self, context, volume_id):
+    def delete_volume(self, context, volume_id, preserve_sts):
         """Deletes and unexports volume."""
         context = context.elevated()
         volume_ref = self.db.volume_get(context, volume_id)
@@ -385,7 +385,9 @@ class VolumeManager(manager.SchedulerDependentManager):
                       volume_ref['id'])
             self.driver.ensure_export(context, volume_ref)
             self.db.volume_update(context, volume_ref['id'],
-                                  {'status': 'available'})
+                                  {'status': preserve_sts})
+            LOG.warn(_("Volume %s: busy , Status was restored"),
+                       volume_ref['name'])
             return True
         except Exception:
             with excutils.save_and_reraise_exception():

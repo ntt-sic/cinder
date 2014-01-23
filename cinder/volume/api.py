@@ -208,9 +208,8 @@ class API(base.Base):
             volume_utils.notify_about_volume_usage(context,
                                                    volume, "delete.end")
             return
-        if not force and volume['status'] not in ["available", "error",
-                                                  "error_restoring",
-                                                  "error_extending"]:
+        if not force and (volume['status'] != "available" or
+                          volume['status'].startswith("error")):
             msg = _("Volume status must be available or error, "
                     "but current status is: %s") % volume['status']
             raise exception.InvalidVolume(reason=msg)
@@ -237,10 +236,11 @@ class API(base.Base):
             self.key_manager.delete_key(context, encryption_key_id)
 
         now = timeutils.utcnow()
+        preserve_sts = volume['status']
         self.db.volume_update(context, volume_id, {'status': 'deleting',
                                                    'terminated_at': now})
 
-        self.volume_rpcapi.delete_volume(context, volume)
+        self.volume_rpcapi.delete_volume(context, volume, preserve_sts)
 
     @wrap_check_policy
     def update(self, context, volume, fields):

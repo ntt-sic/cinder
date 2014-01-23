@@ -260,7 +260,7 @@ class VolumeTestCase(BaseVolumeTestCase):
         self.assertEqual(volume_id, db.volume_get(context.get_admin_context(),
                          volume_id).id)
 
-        self.volume.delete_volume(self.context, volume_id)
+        self.volume.delete_volume(self.context, volume_id, "available")
         vol = db.volume_get(context.get_admin_context(read_deleted='yes'),
                             volume_id)
         self.assertEqual(vol['status'], 'deleted')
@@ -468,14 +468,14 @@ class VolumeTestCase(BaseVolumeTestCase):
             mox.IgnoreArg()).AndRaise(exception.VolumeIsBusy(
                                       volume_name='fake'))
         self.mox.ReplayAll()
-        res = self.volume.delete_volume(self.context, volume_id)
+        res = self.volume.delete_volume(self.context, volume_id, "error")
         self.assertEqual(True, res)
         volume_ref = db.volume_get(context.get_admin_context(), volume_id)
         self.assertEqual(volume_id, volume_ref.id)
-        self.assertEqual("available", volume_ref.status)
+        self.assertEqual("error", volume_ref.status)
 
         self.mox.UnsetStubs()
-        self.volume.delete_volume(self.context, volume_id)
+        self.volume.delete_volume(self.context, volume_id, "error")
 
     def test_delete_volume_in_error_extending(self):
         """Test volume can be deleted in error_extending stats."""
@@ -510,9 +510,9 @@ class VolumeTestCase(BaseVolumeTestCase):
                          db.volume_get(context.get_admin_context(),
                                        volume_dst['id']).snapshot_id)
 
-        self.volume.delete_volume(self.context, volume_dst['id'])
+        self.volume.delete_volume(self.context, volume_dst['id'], "available")
         self.volume.delete_snapshot(self.context, snapshot_id)
-        self.volume.delete_volume(self.context, volume_src['id'])
+        self.volume.delete_volume(self.context, volume_src['id'], "available")
 
     def test_create_snapshot_driver_not_initialized(self):
         volume_src = tests_utils.create_volume(self.context,
@@ -536,7 +536,7 @@ class VolumeTestCase(BaseVolumeTestCase):
         # lets cleanup the mess
         self.volume.driver._initialized = True
         self.volume.delete_snapshot(self.context, snapshot_id)
-        self.volume.delete_volume(self.context, volume_src['id'])
+        self.volume.delete_volume(self.context, volume_src['id'], "available")
 
     def _mock_synchronized(self, name, *s_args, **s_kwargs):
         def inner_sync1(f):
@@ -1299,7 +1299,7 @@ class VolumeTestCase(BaseVolumeTestCase):
         for _index in xrange(total_slots):
             tests_utils.create_volume(self.context, **self.volume_params)
         for volume_id in volume_ids:
-            self.volume.delete_volume(self.context, volume_id)
+            self.volume.delete_volume(self.context, volume_id, "available")
 
     def test_multi_node(self):
         # TODO(termie): Figure out how to test with two nodes,
@@ -1371,7 +1371,7 @@ class VolumeTestCase(BaseVolumeTestCase):
                           db.snapshot_get,
                           self.context,
                           snapshot_id)
-        self.volume.delete_volume(self.context, volume['id'])
+        self.volume.delete_volume(self.context, volume['id'], "available")
 
     def test_create_delete_snapshot_with_metadata(self):
         """Test snapshot can be created with metadata and deleted."""
@@ -1410,7 +1410,7 @@ class VolumeTestCase(BaseVolumeTestCase):
                           volume)
 
         # clean up
-        self.volume.delete_volume(self.context, volume['id'])
+        self.volume.delete_volume(self.context, volume['id'], volume['status'])
 
     def test_force_delete_volume(self):
         """Test volume can be forced to delete."""
@@ -1454,7 +1454,7 @@ class VolumeTestCase(BaseVolumeTestCase):
                           volume,
                           force=True)
 
-        self.volume.delete_volume(self.context, volume['id'])
+        self.volume.delete_volume(self.context, volume['id'], volume['status'])
 
     def test_cannot_delete_volume_with_snapshots(self):
         """Test volume can't be deleted with dependent snapshots."""
@@ -1476,7 +1476,7 @@ class VolumeTestCase(BaseVolumeTestCase):
                           self.context,
                           volume)
         self.volume.delete_snapshot(self.context, snapshot_id)
-        self.volume.delete_volume(self.context, volume['id'])
+        self.volume.delete_volume(self.context, volume['id'], volume['status'])
 
     def test_can_delete_errored_snapshot(self):
         """Test snapshot can be created and deleted."""
@@ -1497,7 +1497,7 @@ class VolumeTestCase(BaseVolumeTestCase):
 
         snapshot['status'] = 'error'
         self.volume.delete_snapshot(self.context, snapshot_id)
-        self.volume.delete_volume(self.context, volume['id'])
+        self.volume.delete_volume(self.context, volume['id'], "available")
 
     def test_create_snapshot_force(self):
         """Test snapshot in use can be created forcibly."""
@@ -1571,7 +1571,7 @@ class VolumeTestCase(BaseVolumeTestCase):
 
         self.mox.UnsetStubs()
         self.volume.delete_snapshot(self.context, snapshot_id)
-        self.volume.delete_volume(self.context, volume_id)
+        self.volume.delete_volume(self.context, volume_id, "available")
 
     def test_delete_no_dev_fails(self):
         """Test delete snapshot with no dev file fails."""
@@ -1663,7 +1663,7 @@ class VolumeTestCase(BaseVolumeTestCase):
         volume = self._create_volume_from_image()
         self.assertEqual(volume['status'], 'available')
         self.assertEqual(volume['bootable'], True)
-        self.volume.delete_volume(self.context, volume['id'])
+        self.volume.delete_volume(self.context, volume['id'], 'available')
 
     def test_create_volume_from_image_not_cloned_status_available(self):
         """Test create volume from image via full copy.
@@ -1674,7 +1674,7 @@ class VolumeTestCase(BaseVolumeTestCase):
         volume = self._create_volume_from_image(fakeout_clone_image=True)
         self.assertEqual(volume['status'], 'available')
         self.assertEqual(volume['bootable'], True)
-        self.volume.delete_volume(self.context, volume['id'])
+        self.volume.delete_volume(self.context, volume['id'], 'available')
 
     def test_create_volume_from_image_exception(self):
         """Verify that create volume from a non-existing image, the volume
@@ -1998,7 +1998,7 @@ class VolumeTestCase(BaseVolumeTestCase):
         self.assertEqual('available',
                          db.volume_get(context.get_admin_context(),
                                        volume_dst['id']).status)
-        self.volume.delete_volume(self.context, volume_dst['id'])
+        self.volume.delete_volume(self.context, volume_dst['id'], 'available')
         self.volume.delete_volume(self.context, volume_src['id'])
 
     def test_create_volume_from_sourcevol_fail_wrong_az(self):
@@ -2062,7 +2062,7 @@ class VolumeTestCase(BaseVolumeTestCase):
                 if meta_dst.key == meta_src.key:
                     self.assertEqual(meta_dst.value, meta_src.value)
         self.volume.delete_volume(self.context, volume_src['id'])
-        self.volume.delete_volume(self.context, volume_dst['id'])
+        self.volume.delete_volume(self.context, volume_dst['id'], 'available')
 
     def test_create_volume_from_sourcevol_failed_clone(self):
         """Test src vol status will be restore by error handling code."""
@@ -2085,7 +2085,7 @@ class VolumeTestCase(BaseVolumeTestCase):
                           volume_src['id'])
         self.assertEqual(volume_src['status'], 'creating')
         self.volume.delete_volume(self.context, volume_dst['id'])
-        self.volume.delete_volume(self.context, volume_src['id'])
+        self.volume.delete_volume(self.context, volume_src['id'], 'creating')
 
     def test_list_availability_zones_enabled_service(self):
         services = [
@@ -2520,7 +2520,7 @@ class DriverTestCase(test.TestCase):
         """Detach volumes from an instance."""
         for volume_id in volume_id_list:
             db.volume_detached(self.context, volume_id)
-            self.volume.delete_volume(self.context, volume_id)
+            self.volume.delete_volume(self.context, volume_id, "available")
 
 
 class GenericVolumeDriverTestCase(DriverTestCase):

@@ -77,10 +77,11 @@ class VolumeAPI(cinder.openstack.common.rpc.proxy.RpcProxy):
                                           host),
                   version='1.4')
 
-    def delete_volume(self, ctxt, volume):
+    def delete_volume(self, ctxt, volume, preserve_sts):
         self.cast(ctxt,
                   self.make_msg('delete_volume',
                                 volume_id=volume['id']),
+                                'preserve_sts': preserve_sts,
                   topic=rpc.queue_get_for(ctxt, self.topic, volume['host']))
 
     def create_snapshot(self, ctxt, volume, snapshot):

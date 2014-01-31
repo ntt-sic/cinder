@@ -469,6 +469,11 @@ class VolumeTestCase(BaseVolumeTestCase):
         volume = tests_utils.create_volume(self.context, **self.volume_params)
         volume_id = volume['id']
         self.volume.create_volume(self.context, volume_id)
+        db.volume_admin_metadata_update(context.get_admin_context(),
+                                        volume_id,
+                                        {'prev_status': 'error_extending'},
+                                        False)
+        db.volume_update(self.context, volume_id, {'status': 'deleting'})
 
         self.mox.StubOutWithMock(self.volume.driver, 'delete_volume')
         self.volume.driver.delete_volume(
@@ -479,7 +484,7 @@ class VolumeTestCase(BaseVolumeTestCase):
         self.assertEqual(True, res)
         volume_ref = db.volume_get(context.get_admin_context(), volume_id)
         self.assertEqual(volume_id, volume_ref.id)
-        self.assertEqual("available", volume_ref.status)
+        self.assertEqual("error_extending", volume_ref.status)
 
         self.mox.UnsetStubs()
         self.volume.delete_volume(self.context, volume_id)

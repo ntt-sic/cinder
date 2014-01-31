@@ -393,14 +393,24 @@ class VolumeManager(manager.SchedulerDependentManager):
         except exception.VolumeIsBusy:
             LOG.error(_("Cannot delete volume %s: volume is busy"),
                       volume_ref['id'])
+            self.driver.ensure_export(context, volume_ref)
+            admin_meta = self.db.volume_admin_metadata_get(context.elevated(),
+                                                           volume_ref['id'])
+            prev_status = 'available'
+            if admin_meta.get('prev_status'):
+                prev_status = admin_meta.get('prev_status', 'available')
             self.db.volume_update(context, volume_ref['id'],
-                                  {'status': 'available'})
+                                  {'status': prev_status})
             return True
         except Exception:
             with excutils.save_and_reraise_exception():
                 self.db.volume_update(context,
                                       volume_ref['id'],
                                       {'status': 'error_deleting'})
+        finally:
+            self.db.volume_admin_metadata_delete(context.elevated(),
+                                                 volume_ref['id'],
+                                                 'prev_status')
 
         # If deleting the source volume in a migration, we want to skip quotas
         # and other database updates.
